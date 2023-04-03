@@ -5,18 +5,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"log"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 var Host = "127.0.0.1"
 var Port = "8080"
-
-var wsmap sync.Map
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
@@ -31,11 +28,10 @@ func Server() *gin.Engine {
 	if p := os.Getenv("PORT"); p != "" {
 		Port = p
 	}
-	gin.SetMode(gin.ReleaseMode)
+	gin.SetMode(gin.DebugMode)
 	r := gin.New()
 	// 基本配置
 	{
-		gin.SetMode(gin.DebugMode)
 		r.Use(gin.Logger())
 		r.Use(gin.CustomRecovery(ExceptionHandler()))
 		r.NoRoute(NoRouteHandler())
@@ -50,7 +46,8 @@ func Server() *gin.Engine {
 
 		api := r.Group("/api")
 		{
-			api.POST("/upload", UploadImage())
+			api.POST("/image/upload", UploadImage())
+			api.POST("/text/upload", UploadText())
 			api.GET("/connect", ConnectSession())
 			api.GET("/command", CommandService())
 		}
@@ -127,18 +124,19 @@ func UploadImage() gin.HandlerFunc {
 			return
 		}
 
+		group, exists := c.GetQuery("group")
+		if !exists {
+			ResponseUtils(c, http.StatusBadRequest, "缺少参数 group")
+			return
+		}
+
 		filename := strconv.Itoa(int(uuid.New().ID())) + file.Filename[strings.LastIndex(file.Filename, "."):]
 
 		msg := MessageLog{
-			Username: username,
-			Type:     "image",
-			Url:      fmt.Sprintf("http://%s:%s/image/%s", Host, Port, filename),
-		}
-
-		err = GetDB().Create(&msg).Error
-		if err != nil {
-			ResponseUtils(c, http.StatusInternalServerError, "数据库错误")
-			return
+			Username:  username,
+			GroupName: group,
+			Type:      LogTypeImage,
+			Data:      fmt.Sprintf("http://%s:%s/image/%s", Host, Port, filename),
 		}
 
 		err = c.SaveUploadedFile(file, "./image/"+filename)
@@ -147,15 +145,68 @@ func UploadImage() gin.HandlerFunc {
 			return
 		}
 
-		broadcast(&R{
-			Code: ImageCode,
-			Msg:  fmt.Sprintf("( %s ) 发送了照片", username),
-			Data: []MessageLog{msg},
-		})
+		err = CreateMessageLog(&msg)
+		if err != nil {
+			ResponseUtils(c, http.StatusInternalServerError, "数据库错误")
+			return
+		}
 
+		g, ok := namespace.GetGroup(group)
+		if ok {
+			g.Broadcast(username, &R{
+				Code: ImageCode,
+				Msg:  fmt.Sprintf("( %s ) 发送了照片", username),
+				Data: []MessageLog{msg},
+			})
+		}
 		c.JSON(http.StatusOK, &R{
 			Code: http.StatusOK,
 			Msg:  "图片上传成功",
+			Data: []MessageLog{msg},
+		})
+	}
+}
+
+func UploadText() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		username, exists := c.GetQuery("username")
+		if !exists {
+			ResponseUtils(c, http.StatusBadRequest, "缺少参数 username")
+			return
+		}
+
+		group, exists := c.GetQuery("group")
+		if !exists {
+			ResponseUtils(c, http.StatusBadRequest, "缺少参数 group")
+			return
+		}
+
+		bytes, err := io.ReadAll(c.Request.Body)
+
+		msg := MessageLog{
+			Username:  username,
+			GroupName: group,
+			Type:      LogTypeText,
+			Data:      string(bytes),
+		}
+
+		err = CreateMessageLog(&msg)
+		if err != nil {
+			ResponseUtils(c, http.StatusInternalServerError, "数据库错误")
+			return
+		}
+
+		g, ok := namespace.GetGroup(group)
+		if ok {
+			g.Broadcast(username, &R{
+				Code: ImageCode,
+				Msg:  fmt.Sprintf("( %s ) 发送了文本", username),
+				Data: []MessageLog{msg},
+			})
+		}
+		c.JSON(http.StatusOK, &R{
+			Code: http.StatusOK,
+			Msg:  "文本上传成功",
 			Data: []MessageLog{msg},
 		})
 	}
@@ -169,23 +220,30 @@ func CommandService() gin.HandlerFunc {
 			return
 		}
 
+		group, exists := c.GetQuery("group")
+		if !exists {
+			ResponseUtils(c, http.StatusBadRequest, "缺少参数 group")
+			return
+		}
+
 		command, exists := c.GetQuery("command")
 		if !exists {
 			ResponseUtils(c, http.StatusBadRequest, "缺少参数 command")
 			return
 		}
 
-		send(username, &R{
-			Code: CommandCode,
-			Msg:  "执行命令",
-			Data: command,
-		})
+		client, ok := namespace.GetClient(group, username)
+		if !ok {
+			ResponseUtils(c, http.StatusBadRequest, "用户客户端未上线")
+			return
+		}
 
-		c.JSON(http.StatusOK, &R{
-			Code: http.StatusOK,
-			Msg:  "命令发送成功",
-			Data: command,
-		})
+		f := cmd[command]
+		if f == nil {
+			ResponseUtils(c, http.StatusBadRequest, fmt.Sprintf("不支持命令: %s", command))
+			return
+		}
+		f(client, c)
 	}
 }
 
@@ -198,72 +256,30 @@ func ConnectSession() gin.HandlerFunc {
 			return
 		}
 
+		groupName, exists := c.GetQuery("group")
+		if !exists {
+			ResponseUtils(c, http.StatusBadRequest, "需要参数 username")
+			return
+		}
+
 		ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			ResponseUtils(c, http.StatusInternalServerError, "协议升级错误")
 			return
+
 		}
-		wsmap.Store(username, ws)
 
-		go listener(username, ws)
-	}
-}
-
-func listener(username string, ws *websocket.Conn) {
-	{
-		broadcast(&R{
-			Code: MessageCode,
-			Msg:  fmt.Sprintf("( %s ) 上线了", username),
-		})
-
-		var list []MessageLog
-		err := GetDB().Model(&MessageLog{}).Find(&list).Error
-		if err == nil {
-			_ = ws.WriteJSON(&R{
-				Code: HistoryImageCode,
-				Msg:  "接受历史数据",
-				Data: list,
-			})
-		} else {
-			log.Printf("( %s ) 历史输出查询错误\n", username)
+		client := &Client{
+			Username:  username,
+			Conn:      ws,
+			GroupName: groupName,
+			CurrentID: -1,
+			ReadMaxID: -1,
 		}
-	}
 
-	for {
-		messageType, bytes, err := ws.ReadMessage()
-		if err != nil {
-			log.Printf("( %s ) 接收消息错误: %v\n", username, err)
-			wsmap.Delete(username)
-			broadcast(&R{
-				Code: MessageCode,
-				Msg:  fmt.Sprintf("( %s ) 下线了", username),
-			})
-			_ = ws.Close()
-			break
-		}
-		log.Printf("( %s ) code: %d, msg: %s", username, messageType, string(bytes))
-	}
-}
+		namespace.AddClient(client)
 
-func broadcast(data any) {
-	log.Printf("广播消息: %v", data)
-	wsmap.Range(func(u, value any) bool {
-		ws := value.(*websocket.Conn)
-		err := ws.WriteJSON(data)
-		if err != nil {
-			log.Printf("发送错误(username: %s): %v\n", u, err)
-		}
-		return true
-	})
-}
-
-func send(username string, data any) {
-	if value, ok := wsmap.Load(username); ok {
-		ws, _ := value.(*websocket.Conn)
-		err := ws.WriteJSON(data)
-		if err != nil {
-			log.Printf("( %s ) 发送数据错误, data: %v", username, data)
-		}
+		go client.Listener()
 	}
 }
 
