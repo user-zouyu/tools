@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"net/http"
+	"strconv"
 )
 
-type Command func(client *Client, ctx *gin.Context)
+type HttpCommand func(client *Client, ctx *gin.Context)
+type WebSocketCommand func(client *Client, data map[string]string)
 
 type CR struct {
 	Command string `json:"command"`
@@ -14,21 +16,26 @@ type CR struct {
 }
 
 const (
-	PrevCommand = "prev"
-	NextCommand = "next"
-	CopyCommand = "copy"
+	PrevCommand  = "prev"
+	NextCommand  = "next"
+	CopyCommand  = "copy"
+	SetupCommand = "setup"
 )
 
-var cmd map[string]Command
+var httpCmd map[string]HttpCommand
+var wsCmd map[string]WebSocketCommand
 
 func init() {
-	cmd = make(map[string]Command, 10)
-	cmd[NextCommand] = NextImageCommand()
-	cmd[PrevCommand] = PrevImageCommand()
-	cmd[CopyCommand] = CopyTextCommand()
+	httpCmd = make(map[string]HttpCommand, 10)
+	httpCmd[NextCommand] = NextImageCommand()
+	httpCmd[PrevCommand] = PrevImageCommand()
+	httpCmd[CopyCommand] = CopyTextCommand()
+
+	wsCmd = make(map[string]WebSocketCommand, 10)
+	wsCmd[SetupCommand] = SetupImageCommand()
 }
 
-func NextImageCommand() Command {
+func NextImageCommand() HttpCommand {
 	return func(c *Client, ctx *gin.Context) {
 		nextId := GetNextIDMessageLog(c)
 
@@ -53,7 +60,7 @@ func NextImageCommand() Command {
 	}
 }
 
-func PrevImageCommand() Command {
+func PrevImageCommand() HttpCommand {
 	return func(c *Client, ctx *gin.Context) {
 		nextId := GetPrevIDMessageLog(c)
 		if nextId != -1 {
@@ -78,7 +85,7 @@ func PrevImageCommand() Command {
 	}
 }
 
-func CopyTextCommand() Command {
+func CopyTextCommand() HttpCommand {
 	return func(c *Client, ctx *gin.Context) {
 		log := GetShowMessageLog(c)
 
@@ -104,6 +111,33 @@ func CopyTextCommand() Command {
 			Code: http.StatusOK,
 			Msg:  "执行成功",
 			Data: log.Data,
+		})
+	}
+}
+
+func SetupImageCommand() WebSocketCommand {
+	return func(client *Client, data map[string]string) {
+		idstr, ok := data["id"]
+		id, err := strconv.Atoi(idstr)
+		if !ok || err != nil {
+			client.Send(client.Username, &R{
+				Code: MessageCode,
+				Msg:  "没有 id 字段",
+			})
+			return
+		}
+		log := GetMessageLogByID(uint(id))
+		if log != nil {
+			client.CurrentID = int(log.ID)
+			client.Send(client.Username, &R{
+				Code: MessageCode,
+				Msg:  fmt.Sprintf("以切换到: %d", log.ID),
+			})
+			return
+		}
+		client.Send(client.Username, &R{
+			Code: MessageCode,
+			Msg:  "没有查询到该记录!",
 		})
 	}
 }

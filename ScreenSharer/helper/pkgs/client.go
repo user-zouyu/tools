@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
 	"log"
@@ -68,11 +69,41 @@ func (c *Client) Listener() {
 		})
 	}
 	for {
-		messageType, bytes, err := c.Conn.ReadMessage()
+		_, bytes, err := c.Conn.ReadMessage()
 		if err != nil {
-			c.Group.DelClient(c.Username)
+			c.NameSpace.DelClient(c)
 			return
 		}
-		log.Printf("( %s ) code: %d, msg: %s", c.Username, messageType, string(bytes))
+		var data map[string]string
+		err = json.Unmarshal(bytes, &data)
+		if err != nil {
+			log.Printf("格式解析错误:data: %s", string(bytes))
+			c.Send(c.Username, &R{
+				Code: MessageCode,
+				Msg:  "格式解析错误",
+			})
+			continue
+		}
+		cmd, ok := data["command"]
+		if !ok {
+			c.Send(c.Username, &R{
+				Code: MessageCode,
+				Msg:  "缺少字段 ( command )",
+			})
+			continue
+		}
+
+		f, ok := wsCmd[cmd]
+		if !ok {
+			log.Printf("不支持该命令: (%s) cmd: %s, data: %v", c.Username, cmd, data)
+			c.Send(c.Username, &R{
+				Code: MessageCode,
+				Msg:  fmt.Sprintf("不支持该命令：%s", cmd),
+			})
+			continue
+		}
+
+		log.Printf("处理命令: (%s) cmd: %s, data: %v", c.Username, cmd, data)
+		f(c, data)
 	}
 }

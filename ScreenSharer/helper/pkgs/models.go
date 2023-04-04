@@ -7,14 +7,15 @@ type MessageLog struct {
 	GroupName string `json:"group" gorm:"type:varchar(16); index"`
 	Username  string `json:"username" gorm:"type:varchar(32)"`
 	Type      string `json:"type" gorm:"type:varchar(32)"`
-	Data      string `json:"url" gorm:"type:varchar(2048)"`
+	Data      string `json:"data" gorm:"type:varchar(2048)"`
 }
 
 func (m *MessageLog) String() string {
 	return fmt.Sprintf(
-		"{ \"id\": %d, \"username\": \"%s\", \"type\": \"%s\", \"url\":\"%s\"",
+		"{ \"id\": %d, \"username\": \"%s\", groupName: %s, \"type\": \"%s\", \"body\":\"%s\"",
 		m.ID,
 		m.Username,
+		m.GroupName,
 		m.Type,
 		m.Data,
 	)

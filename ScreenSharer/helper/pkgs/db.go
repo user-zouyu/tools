@@ -25,6 +25,15 @@ func InitDB() error {
 	return nil
 }
 
+func GetMessageLogByID(id uint) *MessageLog {
+	var log MessageLog
+	err := db.Where("id == ?", id).Take(&log).Error
+	if err != nil {
+		return nil
+	}
+	return &log
+}
+
 func GetMessageLogs(c *Client) []MessageLog {
 	var r []MessageLog
 	err := db.Where("group_name = ?", c.GroupName).Order("id desc").Find(&r).Error

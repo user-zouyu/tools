@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -181,13 +182,23 @@ func UploadText() gin.HandlerFunc {
 			return
 		}
 
-		bytes, err := io.ReadAll(c.Request.Body)
+		language, exists := c.GetQuery("language")
+		if !exists {
+			ResponseUtils(c, http.StatusBadRequest, "缺少参数 language")
+			return
+		}
 
+		bytes, err := io.ReadAll(c.Request.Body)
+		marshal, err := json.Marshal(map[string]string{"language": language, "text": string(bytes)})
+		if err != nil {
+			ResponseUtils(c, http.StatusInternalServerError, "文本解析错误")
+			return
+		}
 		msg := MessageLog{
 			Username:  username,
 			GroupName: group,
 			Type:      LogTypeText,
-			Data:      string(bytes),
+			Data:      string(marshal),
 		}
 
 		err = CreateMessageLog(&msg)
@@ -238,7 +249,7 @@ func CommandService() gin.HandlerFunc {
 			return
 		}
 
-		f := cmd[command]
+		f := httpCmd[command]
 		if f == nil {
 			ResponseUtils(c, http.StatusBadRequest, fmt.Sprintf("不支持命令: %s", command))
 			return
