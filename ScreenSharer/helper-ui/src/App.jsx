@@ -1,22 +1,26 @@
 import React, {useState} from 'react'
 import './App.css'
-import {FloatButton, Form, Input, Layout, List, message, Modal, Switch} from "antd";
+import {FloatButton, Form, Input, Layout, List, message, Modal, Select, Switch} from "antd";
 import Show from "./show/index.jsx";
 import Message from "./message/index.jsx";
-import {SettingOutlined} from "@ant-design/icons";
+import {SettingOutlined, UploadOutlined} from "@ant-design/icons";
+const {TextArea} = Input
 
 
 function App() {
     const [username, setUsername] = useState("zou yu")
+    const [group, setGroup] = useState("test")
+    const [host, setHost] = useState(window.location.host)
     const [btnName, setBtnName] = useState("连接")
     const [list, setList] = useState([]);
-    const [showIdx, setShowIdx] = useState(-1)
-    const [ws, updateWs] = useState(null);
+    const [ws, setWs] = useState(null);
+    const [showID, setShowID] = useState(-1)
     const [connected, setConnected] = useState(false);
-    const [host, setHost] = useState(window.location.host)
     const [siderDisplay, setSiderDisplay] = useState("block")
-
     const [modalShow, setModalShow] = useState(false)
+    const [updateCode, setUpdateCode] = useState(false)
+    const [code, setCode] = useState("")
+    const [language, setLanguage] = useState("Java")
 
     const connect = () => {
         if (username.length < 5) {
@@ -24,13 +28,18 @@ function App() {
             })
             return
         }
+        if (group.length < 5) {
+            message.error("房间号必须超过5个字符").then(() => {
+            })
+            return
+        }
         if (!connected) {
-            const ws = new WebSocket("ws://" + host + "/api/connect?username=" + username);
+            const ws = new WebSocket(`ws://${host}/api/connect?group=${group}&username=${username}`);
             ws.addEventListener('open', () => {
                 message.info("连接成功").then(() => {
                 })
+                setWs(_ => ws)
                 setConnected(true)
-                updateWs(ws)
                 setBtnName("断开连接")
             });
 
@@ -40,7 +49,6 @@ function App() {
             })
             ws.addEventListener('message', (event) => {
                 const data = JSON.parse(event.data);
-                console.log(data)
                 message.info(data.msg).then(() => {
                 })
 
@@ -48,24 +56,29 @@ function App() {
                     setList(prevState => {
                         return [...prevState, ...data.data]
                     })
-
                 }
+
                 if (data.code === 2) {
-                    setList(data.data)
+                    setShowID(data.data["currentID"])
+                    setList(data.data.list)
                 }
 
                 if (data.code === 4) {
-                    setShowIdx(pre => {
-                        return pre + parseInt(data.data)
-                    })
+                    console.log(data)
+                    const cmd = data.data.command
+                    switch (cmd) {
+                        case "next":
+                        case "prev":
+                            setShowID(_ => data.data.data)
+                            break
+                    }
                 }
             });
 
         } else {
-            ws.close()
             message.info("连接关闭").then(() => {
             })
-            updateWs(null)
+            setWs(_ => null)
             setConnected(false)
             setBtnName("连接")
         }
@@ -108,6 +121,14 @@ function App() {
                                value={host}
                                disabled={connected}/>
                     </Form.Item>
+                    <Form.Item label="房间号">
+                        <Input placeholder="房间号"
+                               onChange={(e) => {
+                                   setGroup(e.target.value)
+                               }}
+                               value={group}
+                               disabled={connected}/>
+                    </Form.Item>
                     <Form.Item
                         label="用户名"
                     >
@@ -120,11 +141,73 @@ function App() {
                     </Form.Item>
                 </Form>
             </Modal>
-            <FloatButton
-                icon={<SettingOutlined />}
-                onClick={() => {
-                setModalShow(true);
-            }}/>
+
+            <Modal title="Update Code"
+                   open={updateCode}
+                   onOk={() => {
+                       if (connected) {
+                          ws.send(JSON.stringify({
+                              "command": "updateCode",
+                              "text": code,
+                              "language": language
+                          }))
+                       } else {
+                           message.error("未连接").then(_=>{})
+                       }
+                       setUpdateCode(false)
+                   }}
+                   onCancel={() => setUpdateCode(false)}
+                   okText={"提交"}
+            >
+                <Form labelCol={{
+                    span: 4
+                }} wrapperCol={{
+                    span: 20
+                }}>
+                    <Form.Item
+                        label="语言"
+                    >
+                        <Select
+                            defaultValue="Java"
+                            onChange={(v) => {
+                                setLanguage(v)
+                            }}
+                            options={[
+                                { value: 'Java', label: 'Java' },
+                                { value: 'C++', label: 'C++' },
+                                { value: 'Go', label: 'Go' },
+                                { value: 'JavaScript', label: 'JavaScript'},
+                            ]}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label="代码"
+                    >
+                        <TextArea
+                            showCount
+                            maxLength={1000}
+                            style={{ height: 120, resize: 'none' }}
+                            onChange={(v) => {
+                                setCode(v.currentTarget.value)
+                            }}
+                            placeholder="code...."
+                        />
+                    </Form.Item>
+                </Form>
+            </Modal>
+            <FloatButton.Group>
+                <FloatButton
+                    icon={<SettingOutlined />}
+                    onClick={() => {
+                        setModalShow(true);
+                    }}/>
+
+                <FloatButton
+                    icon={<UploadOutlined />}
+                    onClick={() => {
+                        setUpdateCode(true);
+                    }}/>
+            </FloatButton.Group>
             <Layout className="site-layout">
                 <Layout.Sider style={{
                     display: siderDisplay,
@@ -143,14 +226,14 @@ function App() {
                         dataSource={list}
                         renderItem={(item, idx) => (
                             <List.Item>
-                                <Message key={item.id} idx={idx} showIdx={showIdx} setShowIdx={setShowIdx} data={item}/>
+                                <Message key={item.id} id={idx} showId={showID} setShowId={setShowID} data={item} ws={ws}/>
                             </List.Item>
                         )}
                     />
                 </Layout.Sider>
 
                 <Layout.Content style={{height: "100vh", width: "100vw"}}>
-                    <Show list={list} index={showIdx}/>
+                    <Show list={list} id={showID}/>
                 </Layout.Content>
             </Layout>
 
