@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"net/http"
@@ -16,10 +17,11 @@ type CR struct {
 }
 
 const (
-	PrevCommand  = "prev"
-	NextCommand  = "next"
-	CopyCommand  = "copy"
-	SetupCommand = "setup"
+	PrevCommand       = "prev"
+	NextCommand       = "next"
+	CopyCommand       = "copy"
+	SetupCommand      = "setup"
+	UpdateCodeCommand = "updateCode"
 )
 
 var httpCmd map[string]HttpCommand
@@ -33,6 +35,7 @@ func init() {
 
 	wsCmd = make(map[string]WebSocketCommand, 10)
 	wsCmd[SetupCommand] = SetupImageCommand()
+	wsCmd[UpdateCodeCommand] = UpdateCodeCommandImpl()
 }
 
 func NextImageCommand() HttpCommand {
@@ -138,6 +141,49 @@ func SetupImageCommand() WebSocketCommand {
 		client.Send(client.Username, &R{
 			Code: MessageCode,
 			Msg:  "没有查询到该记录!",
+		})
+	}
+}
+
+func UpdateCodeCommandImpl() WebSocketCommand {
+	return func(client *Client, data map[string]string) {
+		language, lok := data["language"]
+		text, tok := data["text"]
+		if !(lok || tok) {
+			client.Send(client.Username, &R{
+				Code: MessageCode,
+				Msg:  "缺少参数(language or text)",
+			})
+			return
+		}
+		marshal, err := json.Marshal(map[string]string{"language": language, "text": text})
+		if err != nil {
+			client.Send(client.Username, &R{
+				Code: MessageCode,
+				Msg:  "文本序列化错误",
+			})
+			return
+		}
+		msg := MessageLog{
+			Username:  client.Username,
+			GroupName: client.GroupName,
+			Type:      LogTypeText,
+			Data:      string(marshal),
+		}
+
+		err = CreateMessageLog(&msg)
+		if err != nil {
+			client.Send(client.Username, &R{
+				Code: MessageCode,
+				Msg:  "数据库错误",
+			})
+			return
+		}
+
+		namespace.Broadcast(client.GroupName, client.Username, &R{
+			Code: ImageCode,
+			Msg:  fmt.Sprintf("( %s ) 发送了文本", client.Username),
+			Data: []MessageLog{msg},
 		})
 	}
 }

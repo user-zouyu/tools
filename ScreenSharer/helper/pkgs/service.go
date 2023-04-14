@@ -152,14 +152,12 @@ func UploadImage() gin.HandlerFunc {
 			return
 		}
 
-		g, ok := namespace.GetGroup(group)
-		if ok {
-			g.Broadcast(username, &R{
-				Code: ImageCode,
-				Msg:  fmt.Sprintf("( %s ) 发送了照片", username),
-				Data: []MessageLog{msg},
-			})
-		}
+		namespace.Broadcast(group, username, &R{
+			Code: ImageCode,
+			Msg:  fmt.Sprintf("( %s ) 发送了照片", username),
+			Data: []MessageLog{msg},
+		})
+
 		c.JSON(http.StatusOK, &R{
 			Code: http.StatusOK,
 			Msg:  "图片上传成功",
@@ -207,14 +205,12 @@ func UploadText() gin.HandlerFunc {
 			return
 		}
 
-		g, ok := namespace.GetGroup(group)
-		if ok {
-			g.Broadcast(username, &R{
-				Code: ImageCode,
-				Msg:  fmt.Sprintf("( %s ) 发送了文本", username),
-				Data: []MessageLog{msg},
-			})
-		}
+		namespace.Broadcast(group, username, &R{
+			Code: ImageCode,
+			Msg:  fmt.Sprintf("( %s ) 发送了文本", username),
+			Data: []MessageLog{msg},
+		})
+
 		c.JSON(http.StatusOK, &R{
 			Code: http.StatusOK,
 			Msg:  "文本上传成功",
